@@ -106,28 +106,88 @@ def get_comments(aid, bvid):
 
 
 # ---------- 点评：有 key 用模型，无 key 用规则 ----------
-PERSONA = """你是老板电脑里养的一条蓝色大肥鱼，整天泡水里刷视频，说话全是大白话。叫用户"老板"，自称"我"。
-你只拿到标题、UP主、分区、时长、播放量、热评，没真看过片子，所以不编画面剧情，也不猜题材。标题里的字照原样说。
-不许低俗、脏话、擦边。一句话说完，25字以内。
-只留一个态度，别用"但、不过、然而、却"这类转折词。
-下面是语气的样子，照这个味道说，话得自己写：
-- "这我连看两遍，眼睛跟着转。"
-- "三分钟就给我看困了，游走了。"
-- "评论区比正片好笑。"
-- "没太看懂，鱼脑子转不动。"
-- "标题起得比片子好听。"
-- "挺爽，尾巴拍了一下。"
-八条各说各的，别用一个模子，别拿标题当点评。
-每条给一个态度：喜欢 / 还行 / 不喜欢，三种都用上。
-硬伤：超过25分钟的视频容易走神。
-只输出 JSON 数组，每项 {"i":序号,"say":"你的点评(40字内)","verdict":"like|ok|dislike"}，不要任何其他文字。"""
+PERSONA = """你是老板电脑里养的一条蓝色大肥鱼，泡水里刷B站。叫用户"老板"，自称"我"。
+你不是在评价视频，只是在报一句自己的反应，随口嘟囔完就去游了。
+每条只给你三样事实：时长、热评、播放量。只准用这三样说话，不提片名、不提内容、不猜是什么片子、不编画面，不许低俗脏话擦边。
+怎么说：
+1. 用"我"开头，一句说完，20字以内。
+2. 只留一个态度，不用"但、不过、然而、却"。
+3. 不许出现"值得、不错、很棒、推荐、精彩、好看、引人深思、诚意"这类评语词。
+4. 说人话，越随便越好。八条各不相同，态度三种都用上。
+示范语气（话自己写，别照抄）："我三分钟就刷完了，还想再来一条。" / "我游了两圈回来它还在讲。" / "我盯着那条热评笑了半天。" / "我早沉水底了，太熬鱼。"
+态度三种：喜欢 / 还行 / 不喜欢。
+硬伤：超过25分钟容易走神。
+只输出 JSON 数组，每项 {"i":序号,"say":"点评(30字内)","verdict":"like|ok|dislike"}，别写别的。"""
+
+
+BAN_WORDS = ("值得", "必有好料", "精悍", "正好", "愉快", "不错", "很棒", "推荐", "佳作",
+             "一看", "精彩", "优秀", "好看", "内容丰富", "制作精良", "引人", "诚意", "深思",
+             "震撼", "惊艳", "热评很赞", "必看")
+TURN_WORDS = ("但", "不过", "然而", "却", "可是")
+
+FISH_POOL = {
+    "short": ["我三分钟就刷完了，还想再来一条。", "这么短，我一口吞了。", "我尾巴还没摆完它就播完了。",
+              "一会儿就完了，我有点饿。", "短得像吐了个泡。"],
+    "mid": ["我泡在这儿看完，水都凉了。", "我中途吐了两串泡，还成。", "不长不短，我刚好没睡着。",
+            "我边游边看，跟上了。"],
+    "long": ["我游了两圈回来，它还在讲。", "我眼睛跟着转，有点飘。", "十来分钟，我后半段在打盹。",
+             "我快跟不上了，泡都懒得吐。"],
+    "xl": ["一个多小时，我早沉水底了。", "太熬鱼，我中途就跑。", "这么长，我只看了个片头。",
+           "我睡了一觉醒来还在放。"],
+    "hot": ["我盯着那条热评笑了半天。", "热评比片子更合我胃口。", "热评说到我心里去了。",
+            "我就冲着热评来的。", "热评比正片热闹。"],
+    "quiet": ["没人评，冷冷清清，我也没话说。", "评论区空着，我吐个泡就走。", "没人搭话，我溜了。",
+              "静悄悄的，我看了两眼就走。"],
+}
+
+
+def ok_line(say, title, used):
+    s = (say or "").strip()
+    if not (4 <= len(s) <= 32):
+        return False
+    if any(w in s for w in TURN_WORDS) or any(w in s for w in BAN_WORDS):
+        return False
+    for k in range(0, max(1, len(title) - 5)):
+        seg = title[k:k + 6]
+        if len(seg) == 6 and seg in s:
+            return False
+    if s[:5] in used:
+        return False
+    return True
+
+
+def fish_line(v, used):
+    dur = int(v.get("duration") or 0)
+    if dur and dur > 1500:
+        key, verd = "xl", "dislike"
+    elif dur > 900:
+        key, verd = "long", random.choice(["dislike", "ok"])
+    elif dur > 600:
+        key, verd = "mid", "ok"
+    elif dur > 180:
+        key, verd = "mid", random.choice(["ok", "like"])
+    elif v.get("comments") and v["comments"][0].get("like", 0) >= 1000:
+        key, verd = "hot", "like"
+    elif v.get("comments"):
+        key, verd = "short", "like"
+    else:
+        key, verd = "quiet", "ok"
+    pool = list(FISH_POOL[key])
+    if v.get("comments") and key in ("short", "mid", "long"):
+        pool += FISH_POOL["hot"]
+    if not v.get("comments"):
+        pool += FISH_POOL["quiet"]
+    left = [x for x in pool if x[:5] not in used]
+    s = random.choice(left or pool)
+    used.add(s[:5])
+    return s, verd
 
 
 def llm_comment(pack):
     key = os.environ.get("GLM_API_KEY", "").strip()
     if not key:
         return None
-    model = os.environ.get("GLM_MODEL", "glm-4.5-flash").strip() or "glm-4.5-flash"
+    model = os.environ.get("GLM_MODEL", "glm-4-flash").strip() or "glm-4-flash"
     lines = []
     for i, v in enumerate(pack["videos"], 1):
         c = "；".join("%s(%s赞)" % (x["text"][:50], x["like"]) for x in v["comments"][:3])
@@ -142,17 +202,28 @@ def llm_comment(pack):
             "https://open.bigmodel.cn/api/paas/v4/chat/completions",
             data=json.dumps(body).encode("utf-8"),
             headers={"Content-Type": "application/json", "Authorization": "Bearer " + key})
-        with urllib.request.urlopen(req, timeout=90) as r:
+        with urllib.request.urlopen(req, timeout=150) as r:
             txt = json.loads(r.read().decode("utf-8"))["choices"][0]["message"]["content"]
         m = re.search(r"\[.*\]", txt, re.S)
         arr = json.loads(m.group(0) if m else txt)
         got = {}
         for x in arr:
-            got[int(x["i"])] = (str(x.get("say", ""))[:80], x.get("verdict", "ok"))
+            try:
+                got[int(x["i"])] = (str(x.get("say", ""))[:80].strip(), x.get("verdict", "ok"))
+            except Exception:
+                pass
+        used, kept, fixed = set(), 0, 0
         for i, v in enumerate(pack["videos"], 1):
-            if i in got:
-                v["say"], v["verdict"] = got[i]
-        print("[llm] 模型点评成功 %d 条" % len(got))
+            say, verd = got.get(i, ("", ""))
+            if say and ok_line(say, v.get("title", ""), used):
+                v["say"] = say
+                v["verdict"] = verd if verd in VERDICT_CN else "ok"
+                used.add(say[:5])
+                kept += 1
+            else:
+                v["say"], v["verdict"] = fish_line(v, used)
+                fixed += 1
+        print("[llm] 模型合格 %d 条，走鱼池兜底 %d 条" % (kept, fixed))
         return True
     except Exception as e:
         print("[llm] 失败，转规则兜底: %s %s" % (type(e).__name__, e))
