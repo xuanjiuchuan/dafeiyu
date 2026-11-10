@@ -1,0 +1,37 @@
+name: 大肥鱼日报
+
+on:
+  schedule:
+    # UTC 00:00 = 北京时间 08:00，想换时间改这一行（小时减 8）
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  feed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 捞鱼食
+        env:
+          # 想按关键词捞就填，比如 游戏 或 AI；留空则抓全站热门
+          BILI_KEYWORD: ''
+          LIMIT: '8'
+          # 没有配 GLM_API_KEY 时会自动用规则兜底，页面照样能看
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+        run: python fetch_bili_cloud.py
+
+      - name: 存档并发布
+        run: |
+          git config user.name "dafeiyu-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add index.html daily data
+          git commit -m "喂鱼 $(TZ=Asia/Shanghai date +'%Y-%m-%d %H:%M')" || echo "今天没新东西"
+          git push
