@@ -26,6 +26,8 @@ jobs:
           LIMIT: '8'
           # 没有配 GLM_API_KEY 时会自动用规则兜底，页面照样能看
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+          # 免费模型：glm-4.7-flash（最新）/ glm-4.5-flash / glm-4-flash-250414
+          GLM_MODEL: 'glm-4.7-flash'
         run: python fetch_bili_cloud.py
 
       - name: 存档并发布
