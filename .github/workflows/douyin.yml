@@ -1,0 +1,32 @@
+name: 大肥鱼刷抖音（纯云端）
+
+on:
+  schedule:
+    # UTC 01:00 = 北京时间 09:00
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  feed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: 捞抖音热榜
+        env:
+          PICK: '10'
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
+          GLM_MODEL: 'glm-4-flash'
+        run: python fetch_douyin_cloud.py
+      - name: 存档并发布
+        run: |
+          git config user.name "dafeiyu-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add douyin data
+          git commit -m "刷抖音 $(TZ=Asia/Shanghai date +'%Y-%m-%d %H:%M')" || echo "今天没新东西"
+          git push
